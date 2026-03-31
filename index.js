@@ -60,6 +60,19 @@ function verifyShopifyHmac(rawBody, hmacHeader) {
   return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(hmacHeader || ''));
 }
 
+function parseComboContents(bodyHtml) {
+  if (!bodyHtml) return [];
+  // Extraer texto de tags <li> o líneas con bullet
+  const liMatches = [...bodyHtml.matchAll(/<li[^>]*>(.*?)<\/li>/gi)];
+  if (liMatches.length) {
+    return liMatches.map(m => m[1].replace(/<[^>]+>/g, '').trim()).filter(Boolean);
+  }
+  // Fallback: líneas de texto plano
+  return bodyHtml.replace(/<[^>]+>/g, '
+').split('
+').map(l => l.trim()).filter(Boolean);
+}
+
 function parseShopifyOrder(raw) {
   const linesByVendor = {};
   (raw.line_items || []).forEach(item => {
@@ -69,6 +82,9 @@ function parseShopifyOrder(raw) {
       linesByVendor[slug] = { vendorName: vendorRaw, vendorSlug: slug, items: [] };
     }
     const variants = (item.variant_title || '').split(' / ').filter(Boolean);
+    const isCombo = (item.product_type || '').toLowerCase().includes('combo') ||
+                    item.name.toLowerCase().includes('combo');
+    const comboContents = isCombo ? parseComboContents(item.properties?.find(p => p.name === '_combo_html')?.value || item.body_html || '') : [];
     linesByVendor[slug].items.push({
       id: item.id,
       name: item.name.replace(/ - .*/, ''),
@@ -77,6 +93,8 @@ function parseShopifyOrder(raw) {
       qty: item.quantity,
       sku: item.sku || '',
       status: 'pendiente',
+      isCombo,
+      comboContents,
     });
   });
   return linesByVendor;
@@ -235,6 +253,7 @@ app.post('/api/admin/test-order', authAdmin, (req, res) => {
       { id: Date.now()+1, vendor: 'Toro Negro', name: 'Asiento - Corte bistec / 1 kg', variant_title: 'Corte bistec / 1 kg', quantity: 1, sku: 'TN-001' },
       { id: Date.now()+2, vendor: 'Toro Negro', name: 'Asado de tira - Corte 2 dedos / 800 g', variant_title: 'Corte 2 dedos / 800 g', quantity: 2, sku: 'TN-002' },
       { id: Date.now()+3, vendor: 'Toro Negro', name: 'Chorizos parrilleros', variant_title: '', quantity: 4, sku: 'TN-003' },
+      { id: Date.now()+5, vendor: 'Toro Negro', name: 'Combo Quincenal', variant_title: '', product_type: 'Combos', quantity: 1, sku: 'TN-COMBO-01', body_html: '<ul><li>Trutro Largo 1kg</li><li>Posta Rosada 1kg</li><li>Carne Molida Corriente 1kg</li><li>Chuleta Centro 1kg</li></ul>' },
       ...(req.body?.extraVendor ? [
         { id: Date.now()+4, vendor: req.body.extraVendor, name: 'Producto prueba', variant_title: 'Variante A / 500 g', quantity: 1, sku: 'P2-001' }
       ] : []),
