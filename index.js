@@ -14,10 +14,13 @@ const store = {
 
 // ── Vendors iniciales (editar según tus proveedores) ───────────────────────
 const INITIAL_VENDORS = [
-  { name: 'Toro Negro',   slug: 'toro-negro',   color: '#D85A30' },
-  { name: 'Proveedor 2',  slug: 'proveedor-2',  color: '#1D9E75' },
-  { name: 'Proveedor 3',  slug: 'proveedor-3',  color: '#7F77DD' },
-  { name: 'Proveedor 4',  slug: 'proveedor-4',  color: '#378ADD' },
+  { name: 'Toro Negro',     slug: 'toro-negro',     color: '#D85A30' },
+  { name: 'Más que Frutos', slug: 'mas-que-frutos',  color: '#1D9E75' },
+  // Próxima semana — descomentar y agregar nombres reales:
+  // { name: 'Proveedor 3',  slug: 'proveedor-3',  color: '#7F77DD' },
+  // { name: 'Proveedor 4',  slug: 'proveedor-4',  color: '#378ADD' },
+  // { name: 'Proveedor 5',  slug: 'proveedor-5',  color: '#F06292' },
+  // { name: 'Proveedor 6',  slug: 'proveedor-6',  color: '#FFB300' },
 ];
 
 INITIAL_VENDORS.forEach(v => {
