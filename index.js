@@ -210,7 +210,7 @@ app.get('/api/admin/orders', authAdmin, (req, res) => {
     Object.entries(order.vendors).forEach(([slug, block]) => {
       const total = block.items.length;
       const done = block.items.filter(i => i.status === 'listo').length;
-      summary[slug] = { vendorName: block.vendorName, total, done, ready: done === total };
+      summary[slug] = { vendorName: block.vendorName, total, done, ready: done === total, items: block.items };
     });
     return { ...order, vendors: undefined, vendorSummary: summary };
   });
