@@ -6,17 +6,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const SHOPIFY_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET || '';
 
-// ── In-memory store (reemplazar por DB en producción) ──────────────────────
 const store = {
-  orders: {},      // { orderId: orderObject }
-  vendors: {},     // { vendorSlug: { name, token, color } }
+  orders: {},
+  vendors: {},
 };
 
-// ── Vendors iniciales (editar según tus proveedores) ───────────────────────
 const INITIAL_VENDORS = [
   { name: 'Toro Negro',     slug: 'toro-negro',     color: '#D85A30' },
   { name: 'Más que Frutos', slug: 'mas-que-frutos',  color: '#1D9E75' },
-  // Próxima semana — descomentar y agregar nombres reales:
   // { name: 'Proveedor 3',  slug: 'proveedor-3',  color: '#7F77DD' },
   // { name: 'Proveedor 4',  slug: 'proveedor-4',  color: '#378ADD' },
   // { name: 'Proveedor 5',  slug: 'proveedor-5',  color: '#F06292' },
@@ -29,20 +26,16 @@ INITIAL_VENDORS.forEach(v => {
   store.vendors[v.slug] = { ...v, token };
 });
 
-// ── Middleware ─────────────────────────────────────────────────────────────
 app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
-// Servir HTMLs desde rutas explícitas (Railway/nixpacks no usa subdirectorios)
 app.get('/panel/admin.html', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
 app.get('/panel/vendor.html', (req, res) => res.sendFile(path.join(__dirname, 'vendor.html')));
-// Atajos sin /panel/ para conveniencia
 app.get('/admin', (req, res) => res.redirect('/panel/admin.html?' + new URLSearchParams(req.query).toString()));
 app.get('/vendor', (req, res) => res.redirect('/panel/vendor.html?' + new URLSearchParams(req.query).toString()));
 
 app.use(express.static(__dirname));
 
-// ── Helpers ────────────────────────────────────────────────────────────────
 function slugify(str) {
   return (str || 'sin-proveedor')
     .toLowerCase()
@@ -52,7 +45,7 @@ function slugify(str) {
 }
 
 function verifyShopifyHmac(rawBody, hmacHeader) {
-  if (!SHOPIFY_SECRET) return true; // dev mode
+  if (!SHOPIFY_SECRET) return true;
   const hash = crypto
     .createHmac('sha256', SHOPIFY_SECRET)
     .update(rawBody)
@@ -62,15 +55,11 @@ function verifyShopifyHmac(rawBody, hmacHeader) {
 
 function parseComboContents(bodyHtml) {
   if (!bodyHtml) return [];
-  // Extraer texto de tags <li> o líneas con bullet
   const liMatches = [...bodyHtml.matchAll(/<li[^>]*>(.*?)<\/li>/gi)];
   if (liMatches.length) {
-    return liMatches.map(m => m[1].replace(/<[^>]+>/g, '').trim()).filter(Boolean);
+    return liMatches.map(function(m){ return m[1].replace(/<[^>]+>/g, '').trim(); }).filter(Boolean);
   }
-  // Fallback: líneas de texto plano
-  return bodyHtml.replace(/<[^>]+>/g, '
-').split('
-').map(l => l.trim()).filter(Boolean);
+  return bodyHtml.replace(/<[^>]+>/g, ' ').split('  ').map(function(l){ return l.trim(); }).filter(Boolean);
 }
 
 function parseShopifyOrder(raw) {
@@ -100,13 +89,11 @@ function parseShopifyOrder(raw) {
   return linesByVendor;
 }
 
-// ── Webhook Shopify ────────────────────────────────────────────────────────
 app.post('/webhook/orders/create', (req, res) => {
   const hmac = req.headers['x-shopify-hmac-sha256'];
   if (!verifyShopifyHmac(req.body, hmac)) {
     return res.status(401).send('Unauthorized');
   }
-
   let raw;
   try { raw = JSON.parse(req.body.toString()); }
   catch { return res.status(400).send('Bad JSON'); }
@@ -126,16 +113,10 @@ app.post('/webhook/orders/create', (req, res) => {
 
   store.orders[orderId] = order;
 
-  // Auto-registrar vendors nuevos
   Object.keys(linesByVendor).forEach(slug => {
     if (!store.vendors[slug]) {
       const token = crypto.randomBytes(16).toString('hex');
-      store.vendors[slug] = {
-        name: linesByVendor[slug].vendorName,
-        slug,
-        color: '#888780',
-        token,
-      };
+      store.vendors[slug] = { name: linesByVendor[slug].vendorName, slug, color: '#888780', token };
     }
   });
 
@@ -143,9 +124,6 @@ app.post('/webhook/orders/create', (req, res) => {
   res.status(200).send('OK');
 });
 
-// ── API ────────────────────────────────────────────────────────────────────
-
-// Autenticación por token
 function authVendor(req, res, next) {
   const token = req.query.token || req.headers['x-vendor-token'];
   const vendor = Object.values(store.vendors).find(v => v.token === token);
@@ -162,11 +140,9 @@ function authAdmin(req, res, next) {
   next();
 }
 
-// Pedidos para un vendor específico
 app.get('/api/vendor/orders', authVendor, (req, res) => {
   const slug = req.vendor.slug;
   const result = [];
-
   Object.values(store.orders).forEach(order => {
     const vendorBlock = order.vendors[slug];
     if (!vendorBlock) return;
@@ -181,37 +157,28 @@ app.get('/api/vendor/orders', authVendor, (req, res) => {
       allDone,
     });
   });
-
-  // Ordenar: pendientes primero, luego por tiempo
   result.sort((a, b) => {
     if (a.allDone !== b.allDone) return a.allDone ? 1 : -1;
     return new Date(a.createdAt) - new Date(b.createdAt);
   });
-
   res.json({ vendor: req.vendor.name, orders: result });
 });
 
-// Actualizar estado de un ítem
 app.patch('/api/vendor/orders/:orderId/items/:itemId', authVendor, (req, res) => {
   const { orderId, itemId } = req.params;
   const { status } = req.body;
   const VALID = ['pendiente', 'preparando', 'listo'];
   if (!VALID.includes(status)) return res.status(400).json({ error: 'Estado inválido' });
-
   const order = store.orders[orderId];
   if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
-
   const vendorBlock = order.vendors[req.vendor.slug];
   if (!vendorBlock) return res.status(403).json({ error: 'No tienes acceso a este pedido' });
-
   const item = vendorBlock.items.find(i => String(i.id) === String(itemId));
   if (!item) return res.status(404).json({ error: 'Ítem no encontrado' });
-
   item.status = status;
   res.json({ ok: true, item });
 });
 
-// Marcar todo el pedido como listo
 app.patch('/api/vendor/orders/:orderId/complete', authVendor, (req, res) => {
   const order = store.orders[req.params.orderId];
   if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
@@ -221,7 +188,6 @@ app.patch('/api/vendor/orders/:orderId/complete', authVendor, (req, res) => {
   res.json({ ok: true });
 });
 
-// Vista admin — todos los pedidos con estado por vendor
 app.get('/api/admin/orders', authAdmin, (req, res) => {
   const result = Object.values(store.orders).map(order => {
     const summary = {};
@@ -236,12 +202,10 @@ app.get('/api/admin/orders', authAdmin, (req, res) => {
   res.json({ orders: result });
 });
 
-// Lista de vendors con sus tokens (solo admin)
 app.get('/api/admin/vendors', authAdmin, (req, res) => {
   res.json({ vendors: Object.values(store.vendors) });
 });
 
-// Inyectar pedido de prueba (solo admin / dev)
 app.post('/api/admin/test-order', authAdmin, (req, res) => {
   const fake = {
     id: Date.now(),
@@ -259,9 +223,6 @@ app.post('/api/admin/test-order', authAdmin, (req, res) => {
       ] : []),
     ]
   };
-  req.body = Buffer.from(JSON.stringify(fake));
-  req.headers['x-shopify-hmac-sha256'] = '';
-
   const linesByVendor = parseShopifyOrder(fake);
   const orderId = String(fake.id);
   store.orders[orderId] = {
@@ -277,18 +238,13 @@ app.post('/api/admin/test-order', authAdmin, (req, res) => {
       store.vendors[slug] = { name: linesByVendor[slug].vendorName, slug, color: '#888780', token: crypto.randomBytes(16).toString('hex') };
     }
   });
-
   res.json({ ok: true, orderId, number: store.orders[orderId].number });
 });
 
-// ── Start ──────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\n🥩 Karnal KDS corriendo en puerto ${PORT}`);
-  console.log(`\n── URLs de proveedores ──`);
   Object.values(store.vendors).forEach(v => {
     console.log(`  ${v.name}: /panel/vendor?token=${v.token}`);
   });
-  console.log(`\n── Admin ──`);
-  console.log(`  Panel admin: /panel/admin?key=${process.env.ADMIN_KEY || 'karnal-admin-2025'}`);
-  console.log(`  Pedido de prueba: POST /api/admin/test-order?key=${process.env.ADMIN_KEY || 'karnal-admin-2025'}\n`);
+  console.log(`  Panel admin: /panel/admin?key=${process.env.ADMIN_KEY || 'karnal-admin-2025'}\n`);
 });
