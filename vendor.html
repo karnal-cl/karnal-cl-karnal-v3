@@ -205,7 +205,7 @@ body { background: var(--negro); color: var(--text); font-family: 'Nunito', sans
   </div>
 </div>
 </div>
-<div class="toast" id="toast">Nuevo pedido entrante</div>
+<div class="toast" id="toast">🔔 Nuevo pedido entrante</div>
 <script>
 const token = new URLSearchParams(location.search).get('token');
 if (!token) document.body.innerHTML = '<div style="padding:60px;text-align:center;font-size:20px;color:#3ED6E0;font-family:Nunito,sans-serif;font-weight:800;">URL INVÁLIDA — FALTA TOKEN</div>';
@@ -390,16 +390,14 @@ function buildPrintHTML(ordersToPrint) {
 function printOrder(orderId) {
   const order = orders.find(o => o.id === orderId);
   if (!order) return;
-  const area = document.getElementById('print-area');
-  area.innerHTML = buildPrintHTML([order]);
+  document.getElementById('print-area').innerHTML = buildPrintHTML([order]);
   window.print();
 }
 
 function printAll() {
   const active = orders.filter(o => !o.items.every(i => i.status === 'listo'));
   if (!active.length) { alert('No hay pedidos activos para imprimir.'); return; }
-  const area = document.getElementById('print-area');
-  area.innerHTML = buildPrintHTML(active);
+  document.getElementById('print-area').innerHTML = buildPrintHTML(active);
   window.print();
 }
 
@@ -416,20 +414,41 @@ async function completeOrder(orderId) {
 
 function switchTab(el) { document.querySelectorAll('.tab').forEach(t => t.classList.remove('active')); el.classList.add('active'); }
 function showToast() { const t = document.getElementById('toast'); t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 4000); }
+
 function enableSound() {
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const btn = document.getElementById('sound-btn'); btn.textContent = 'Sonido activo'; btn.classList.add('on');
+  // Reproduce un beep silencioso inmediatamente para desbloquear el contexto
+  doBeep(0.001);
+  const btn = document.getElementById('sound-btn');
+  btn.textContent = 'Sonido activo';
+  btn.classList.add('on');
 }
-function playBeep() {
+
+function doBeep(volume) {
   if (!audioCtx) return;
-  [660, 880, 1100].forEach((freq, i) => {
-    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.connect(g); g.connect(audioCtx.destination); o.frequency.value = freq; o.type = 'sine';
+  const vol = volume || 0.25;
+  [660, 880, 1100].forEach(function(freq, i) {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.connect(g); g.connect(audioCtx.destination);
+    o.frequency.value = freq; o.type = 'sine';
     const t = audioCtx.currentTime + i * 0.18;
-    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.25, t + 0.05); g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
     o.start(t); o.stop(t + 0.35);
   });
 }
+
+function playBeep() {
+  if (!audioCtx) return;
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume().then(function() { doBeep(); });
+  } else {
+    doBeep();
+  }
+}
+
 function updateClock() {
   const now = new Date();
   document.getElementById('clock').textContent = now.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
