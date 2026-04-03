@@ -6,14 +6,17 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const SHOPIFY_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET || '';
 
+// ── In-memory store (reemplazar por DB en producción) ──────────────────────
 const store = {
-  orders: {},
-  vendors: {},
+  orders: {},      // { orderId: orderObject }
+  vendors: {},     // { vendorSlug: { name, token, color } }
 };
 
+// ── Vendors iniciales (editar según tus proveedores) ───────────────────────
 const INITIAL_VENDORS = [
   { name: 'Toro Negro',     slug: 'toro-negro',     color: '#D85A30' },
   { name: 'Más que Frutos', slug: 'mas-que-frutos',  color: '#1D9E75' },
+  // Próxima semana — descomentar y agregar nombres reales:
   // { name: 'Proveedor 3',  slug: 'proveedor-3',  color: '#7F77DD' },
   // { name: 'Proveedor 4',  slug: 'proveedor-4',  color: '#378ADD' },
   // { name: 'Proveedor 5',  slug: 'proveedor-5',  color: '#F06292' },
@@ -26,16 +29,20 @@ INITIAL_VENDORS.forEach(v => {
   store.vendors[v.slug] = { ...v, token };
 });
 
+// ── Middleware ─────────────────────────────────────────────────────────────
 app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
+// Servir HTMLs desde rutas explícitas (Railway/nixpacks no usa subdirectorios)
 app.get('/panel/admin.html', (req, res) => res.sendFile(path.join(__dirname, 'admin.html')));
 app.get('/panel/vendor.html', (req, res) => res.sendFile(path.join(__dirname, 'vendor.html')));
+// Atajos sin /panel/ para conveniencia
 app.get('/admin', (req, res) => res.redirect('/panel/admin.html?' + new URLSearchParams(req.query).toString()));
 app.get('/vendor', (req, res) => res.redirect('/panel/vendor.html?' + new URLSearchParams(req.query).toString()));
 
 app.use(express.static(__dirname));
 
+// ── Helpers ────────────────────────────────────────────────────────────────
 function slugify(str) {
   return (str || 'sin-proveedor')
     .toLowerCase()
@@ -45,12 +52,36 @@ function slugify(str) {
 }
 
 function verifyShopifyHmac(rawBody, hmacHeader) {
-  if (!SHOPIFY_SECRET) return true;
+  if (!SHOPIFY_SECRET) return true; // dev mode
   const hash = crypto
     .createHmac('sha256', SHOPIFY_SECRET)
     .update(rawBody)
     .digest('base64');
   return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(hmacHeader || ''));
+}
+
+const COMBO_DICT = {
+  'combo quincenal':           ['Trutro Largo 1kg', 'Posta Rosada 1kg', 'Carne Molida Corriente 1kg', 'Chuleta Centro 1kg'],
+  'combo fitness semanal':     ['Pechuga Entera 1kg', 'Trutro Largo 1kg', 'Posta Molida 1kg', 'Posta Rosada Bistec 1kg'],
+  'combo mensual casa grande': ['Carne Molida Corriente x2', 'Plateada x2', 'Posta Negra x2', 'Pulpa Cerdo x2', 'Hamburguesas 225gr x18'],
+  'combo parrilla clasica':    ['Punta Picana x2', 'Chunchules x1', 'Chorizo Bianchini 500gr', 'Lomo Liso x1'],
+  'combo parrilla clásica':    ['Punta Picana x2', 'Chunchules x1', 'Chorizo Bianchini 500gr', 'Lomo Liso x1'],
+  'combo mensual familiar':    ['Carne Molida Especial x1', 'Asiento Bistec x2', 'Trutro Corto x2', 'Hamburguesas 225grs x12'],
+  'combo parrilla esencial':   ['Costillar x1', 'Chorizo Parrillero 500gr', 'Lomo Liso x1', 'Punta Picana x1'],
+  'combo parrilla familiar':   ['Palanca x2', 'Punta Picana x1', 'Costillar x2', 'Chorizo Parrillero 500gr x2'],
+  'combo tomahawk':            ['Tomahawk x2 (1kg c/u)', 'Asado Tira Bandera 1kg'],
+  'combo picoteo clasico':     ['Japonés Salado 200g', 'Maní Salado 250g', 'Mix Clásico con Sal 200g', 'Almendras Tostadas 100g', 'Cholitos 200g', 'Marshmallows 200g'],
+  'combo picoteo clásico':     ['Japonés Salado 200g', 'Maní Salado 250g', 'Mix Clásico con Sal 200g', 'Almendras Tostadas 100g', 'Cholitos 200g', 'Marshmallows 200g'],
+  'combo picoteo premium':     ['Pistacho sin Sal 100g', 'Cajú con Sal 100g', 'Japonés con Ají 200g', 'Mix Clásico con Sal 200g', 'Almendras Tostadas 100g'],
+  'combo picoteo salado':      ['Pistacho con Sal 100g', 'Japonés Salado 200g', 'Maní Salado 250g', 'Maní sin Sal 250g', 'Mix Clásico sin Sal 200g', 'Almendras Tostadas 100g'],
+};
+
+function normalizeComboName(name) {
+  return name
+    .replace(/[^\w\s]/g, ' ')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function parseComboContents(bodyHtml) {
@@ -73,13 +104,32 @@ function parseShopifyOrder(raw) {
     const variants = (item.variant_title || '').split(' / ').filter(Boolean);
     const isCombo = (item.product_type || '').toLowerCase().includes('combo') ||
                     item.name.toLowerCase().includes('combo');
-    const comboContents = isCombo ? parseComboContents(item.properties?.find(p => p.name === '_combo_html')?.value || item.body_html || '') : [];
+    const comboContents = isCombo ? (function() {
+      const key = normalizeComboName(item.name);
+      const dictMatch = Object.keys(COMBO_DICT).find(k => key.includes(k) || k.includes(key));
+      if (dictMatch) return COMBO_DICT[dictMatch];
+      return parseComboContents(item.properties?.find(p => p.name === '_combo_html')?.value || item.body_html || '');
+    })() : [];
+    // Leer peso real desde _measura_data (productos vendidos por kg)
+    let pesoReal = null;
+    const measuraProp = (item.properties || []).find(function(p){ return p.name === '_measura_data'; });
+    if (measuraProp) {
+      try {
+        const mdata = JSON.parse(measuraProp.value);
+        const dims = mdata && mdata.measurement && mdata.measurement.dimensions;
+        if (dims && dims[0] && dims[0].value && dims[0].unit) {
+          pesoReal = dims[0].value + ' ' + dims[0].unit;
+        }
+      } catch(e) {}
+    }
+
     linesByVendor[slug].items.push({
       id: item.id,
       name: item.name.replace(/ - .*/, ''),
       corte: variants[0] || null,
       gramaje: variants[1] || null,
       qty: item.quantity,
+      pesoReal,
       sku: item.sku || '',
       status: 'pendiente',
       isCombo,
@@ -89,11 +139,13 @@ function parseShopifyOrder(raw) {
   return linesByVendor;
 }
 
+// ── Webhook Shopify ────────────────────────────────────────────────────────
 app.post('/webhook/orders/create', (req, res) => {
   const hmac = req.headers['x-shopify-hmac-sha256'];
   if (!verifyShopifyHmac(req.body, hmac)) {
     return res.status(401).send('Unauthorized');
   }
+
   let raw;
   try { raw = JSON.parse(req.body.toString()); }
   catch { return res.status(400).send('Bad JSON'); }
@@ -113,10 +165,16 @@ app.post('/webhook/orders/create', (req, res) => {
 
   store.orders[orderId] = order;
 
+  // Auto-registrar vendors nuevos
   Object.keys(linesByVendor).forEach(slug => {
     if (!store.vendors[slug]) {
       const token = crypto.randomBytes(16).toString('hex');
-      store.vendors[slug] = { name: linesByVendor[slug].vendorName, slug, color: '#888780', token };
+      store.vendors[slug] = {
+        name: linesByVendor[slug].vendorName,
+        slug,
+        color: '#888780',
+        token,
+      };
     }
   });
 
@@ -124,6 +182,9 @@ app.post('/webhook/orders/create', (req, res) => {
   res.status(200).send('OK');
 });
 
+// ── API ────────────────────────────────────────────────────────────────────
+
+// Autenticación por token
 function authVendor(req, res, next) {
   const token = req.query.token || req.headers['x-vendor-token'];
   const vendor = Object.values(store.vendors).find(v => v.token === token);
@@ -140,9 +201,11 @@ function authAdmin(req, res, next) {
   next();
 }
 
+// Pedidos para un vendor específico
 app.get('/api/vendor/orders', authVendor, (req, res) => {
   const slug = req.vendor.slug;
   const result = [];
+
   Object.values(store.orders).forEach(order => {
     const vendorBlock = order.vendors[slug];
     if (!vendorBlock) return;
@@ -157,28 +220,37 @@ app.get('/api/vendor/orders', authVendor, (req, res) => {
       allDone,
     });
   });
+
+  // Ordenar: pendientes primero, luego por tiempo
   result.sort((a, b) => {
     if (a.allDone !== b.allDone) return a.allDone ? 1 : -1;
     return new Date(a.createdAt) - new Date(b.createdAt);
   });
+
   res.json({ vendor: req.vendor.name, orders: result });
 });
 
+// Actualizar estado de un ítem
 app.patch('/api/vendor/orders/:orderId/items/:itemId', authVendor, (req, res) => {
   const { orderId, itemId } = req.params;
   const { status } = req.body;
   const VALID = ['pendiente', 'preparando', 'listo'];
   if (!VALID.includes(status)) return res.status(400).json({ error: 'Estado inválido' });
+
   const order = store.orders[orderId];
   if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
+
   const vendorBlock = order.vendors[req.vendor.slug];
   if (!vendorBlock) return res.status(403).json({ error: 'No tienes acceso a este pedido' });
+
   const item = vendorBlock.items.find(i => String(i.id) === String(itemId));
   if (!item) return res.status(404).json({ error: 'Ítem no encontrado' });
+
   item.status = status;
   res.json({ ok: true, item });
 });
 
+// Marcar todo el pedido como listo
 app.patch('/api/vendor/orders/:orderId/complete', authVendor, (req, res) => {
   const order = store.orders[req.params.orderId];
   if (!order) return res.status(404).json({ error: 'Pedido no encontrado' });
@@ -188,6 +260,7 @@ app.patch('/api/vendor/orders/:orderId/complete', authVendor, (req, res) => {
   res.json({ ok: true });
 });
 
+// Vista admin — todos los pedidos con estado por vendor
 app.get('/api/admin/orders', authAdmin, (req, res) => {
   const result = Object.values(store.orders).map(order => {
     const summary = {};
@@ -202,10 +275,12 @@ app.get('/api/admin/orders', authAdmin, (req, res) => {
   res.json({ orders: result });
 });
 
+// Lista de vendors con sus tokens (solo admin)
 app.get('/api/admin/vendors', authAdmin, (req, res) => {
   res.json({ vendors: Object.values(store.vendors) });
 });
 
+// Inyectar pedido de prueba (solo admin / dev)
 app.post('/api/admin/test-order', authAdmin, (req, res) => {
   const fake = {
     id: Date.now(),
@@ -223,6 +298,9 @@ app.post('/api/admin/test-order', authAdmin, (req, res) => {
       ] : []),
     ]
   };
+  req.body = Buffer.from(JSON.stringify(fake));
+  req.headers['x-shopify-hmac-sha256'] = '';
+
   const linesByVendor = parseShopifyOrder(fake);
   const orderId = String(fake.id);
   store.orders[orderId] = {
@@ -238,13 +316,18 @@ app.post('/api/admin/test-order', authAdmin, (req, res) => {
       store.vendors[slug] = { name: linesByVendor[slug].vendorName, slug, color: '#888780', token: crypto.randomBytes(16).toString('hex') };
     }
   });
+
   res.json({ ok: true, orderId, number: store.orders[orderId].number });
 });
 
+// ── Start ──────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\n🥩 Karnal KDS corriendo en puerto ${PORT}`);
+  console.log(`\n── URLs de proveedores ──`);
   Object.values(store.vendors).forEach(v => {
     console.log(`  ${v.name}: /panel/vendor?token=${v.token}`);
   });
-  console.log(`  Panel admin: /panel/admin?key=${process.env.ADMIN_KEY || 'karnal-admin-2025'}\n`);
+  console.log(`\n── Admin ──`);
+  console.log(`  Panel admin: /panel/admin?key=${process.env.ADMIN_KEY || 'karnal-admin-2025'}`);
+  console.log(`  Pedido de prueba: POST /api/admin/test-order?key=${process.env.ADMIN_KEY || 'karnal-admin-2025'}\n`);
 });
