@@ -160,13 +160,43 @@ async function loadOrders(){
         const spCls=item.status==='listo'?'sp-listo':item.status==='preparando'?'sp-preparando':'sp-pendiente';
         const spLabel=item.status==='listo'?'✓ Listo':item.status==='preparando'?'⏳ Preparando':'· Pendiente';
         const variant=[item.corte,item.gramaje].filter(Boolean).join(' · ');
-        return `<tr><td><div class="item-name">${item.name}</div>${variant?`<div class="item-variant">${variant}</div>`:''}</td><td class="item-qty">×${item.qty}</td><td><span class="status-pill ${spCls}">${spLabel}</span></td></tr>`;
+        const qtyLabel=item.pesoReal?item.pesoReal:'×'+item.qty;
+        const comboHTML=item.isCombo&&item.comboContents&&item.comboContents.length
+          ?`<div style="margin-top:4px;padding:6px 8px;background:rgba(255,255,255,0.04);border-left:2px solid var(--celeste);border-radius:4px">${item.comboContents.map(c=>`<div style="font-size:11px;color:var(--text2);padding:1px 0">• ${c}</div>`).join('')}</div>`:'';
+        return `<tr>
+          <td><div class="item-name">${item.name}</div>${variant?`<div class="item-variant">${variant}</div>`:''}${comboHTML}</td>
+          <td class="item-qty">${qtyLabel}</td>
+          <td><span class="status-pill ${spCls}">${spLabel}</span></td>
+        </tr>`;
       }).join('');
-      return `<div class="vendor-block"><div class="vendor-header"><div class="vendor-dot-sm" style="background:${color}"></div><div class="vendor-name-sm">${v.vendorName}</div><div class="vendor-progress">${v.done}/${v.total} listos</div></div><table class="items-table">${itemRows}</table></div>`;
+      return `<div class="vendor-block">
+        <div class="vendor-header">
+          <div class="vendor-dot-sm" style="background:${color}"></div>
+          <div class="vendor-name-sm">${v.vendorName}</div>
+          <div class="vendor-progress">${v.done}/${v.total} listos</div>
+        </div>
+        <table class="items-table">${itemRows}</table>
+      </div>`;
     }).join('');
     const detailId=`detail-${idx}`;
     const wasOpen=openSet.has(detailId);
-    return `<div class="order-card"><div class="order-stripe" style="background:${sc}"></div><div class="order-header" onclick="toggleDetail(${idx})"><div><div class="order-num">${order.number} <span class="order-time ${timerCls(mins)}">${mins} min</span></div><div class="order-meta">${order.customer} · ${new Date(order.createdAt).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})} hrs</div>${order.note?`<div class="order-note">${order.note}</div>`:''}</div><div class="order-right"><div class="chips">${chips}</div><span class="chevron ${wasOpen?'open':''}" id="chev-${idx}">▾</span></div></div><div class="order-detail ${wasOpen?'open':''}" id="${detailId}">${vendorBlocks}</div></div>`;
+    return `<div class="order-card">
+      <div class="order-stripe" style="background:${sc}"></div>
+      <div class="order-header" onclick="toggleDetail(${idx})">
+        <div>
+          <div class="order-num">${order.number} <span class="order-time ${timerCls(mins)}">${mins} min</span></div>
+          <div class="order-meta">${order.customer} · ${new Date(order.createdAt).toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'})} hrs</div>
+          ${order.note?`<div class="order-note">${order.note}</div>`:''}
+        </div>
+        <div class="order-right">
+          <div class="chips">${chips}</div>
+          <span class="chevron ${wasOpen?'open':''}" id="chev-${idx}">▾</span>
+        </div>
+      </div>
+      <div class="order-detail ${wasOpen?'open':''}" id="${detailId}">
+        ${vendorBlocks}
+      </div>
+    </div>`;
   }).join('');
 }
 function toggleDetail(idx){
@@ -184,7 +214,14 @@ async function loadVendors(){
   if(!vendors.length){grid.innerHTML='<div class="empty">Sin proveedores.</div>';return;}
   grid.innerHTML=vendors.map(v=>{
     const url=`${base}/panel/vendor.html?token=${v.token}`;
-    return `<div class="vendor-card"><div class="vl-dot" style="background:${v.color||'#3ED6E0'}"></div><div style="flex:1;min-width:0"><div class="vl-name">${v.name}</div><div class="vl-url">${url}</div></div><button class="copy-btn" id="copy-${v.slug}" onclick="copyUrl('${url}','${v.slug}')">Copiar link</button></div>`;
+    return `<div class="vendor-card">
+      <div class="vl-dot" style="background:${v.color||'#3ED6E0'}"></div>
+      <div style="flex:1;min-width:0">
+        <div class="vl-name">${v.name}</div>
+        <div class="vl-url">${url}</div>
+      </div>
+      <button class="copy-btn" id="copy-${v.slug}" onclick="copyUrl('${url}','${v.slug}')">Copiar link</button>
+    </div>`;
   }).join('');
 }
 function copyUrl(url,slug){
